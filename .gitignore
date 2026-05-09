@@ -1,0 +1,11 @@
+# .gitignore
+
+# Python関連のキャッシュファイル
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 仮想環境
+venv/
+env/
+.env
