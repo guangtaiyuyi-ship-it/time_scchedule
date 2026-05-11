@@ -10,6 +10,7 @@ st.title("私のタイムスケジュール帳")
 
 # --- 2. データの保存先 ---
 csv_file_path = "schedule.csv"
+template_csv_path = "template_schedule.csv"
 
 
 # --- 3. データを読み込む仕組み ---
@@ -20,7 +21,68 @@ def load_data():
         return pd.DataFrame(columns=["日付", "タスク", "開始時間", "終了時間"])
 
 
+def load_template_data():
+    if os.path.exists(template_csv_path):
+        return pd.read_csv(template_csv_path)
+    else:
+        return pd.DataFrame(columns=["曜日", "タスク", "開始時間", "終了時間"])
+
+
 df_schedule = load_data()
+df_template = load_template_data()
+
+# ==========================================
+# --- 左側のサイドバー（テンプレート設定） ---
+# ==========================================
+st.sidebar.header("⚙️ 曜日ごとの基本テンプレート")
+
+st.sidebar.subheader("➕ 新規登録")
+temp_day = st.sidebar.selectbox(
+    "曜日を選択", ["月", "火", "水", "木", "金", "土", "日"]
+)
+temp_task = st.sidebar.text_input("タスク名", "朝食・準備", key="t_task")
+temp_start = st.sidebar.time_input("開始時間", time(7, 0), key="t_start")
+temp_end = st.sidebar.time_input("終了時間", time(8, 0), key="t_end")
+
+if st.sidebar.button("テンプレートに登録する"):
+    new_temp = pd.DataFrame(
+        {
+            "曜日": [temp_day],
+            "タスク": [temp_task],
+            "開始時間": [temp_start.strftime("%H:%M")],
+            "終了時間": [temp_end.strftime("%H:%M")],
+        }
+    )
+
+    df_template = pd.concat([df_template, new_temp], ignore_index=True)
+    df_template.to_csv(template_csv_path, index=False)
+    st.sidebar.success(f"毎週{temp_day}曜日に「{temp_task}」を登録しました！")
+    st.rerun()
+
+st.sidebar.markdown("---")
+
+# ==========================================
+# --- ★新機能★ テンプレートの削除機能 ---
+# ==========================================
+st.sidebar.subheader("🗑️ 登録済みテンプレートの管理")
+
+if not df_template.empty:
+    # 登録されているテンプレートを上から順番に表示します
+    for index, row in df_template.iterrows():
+        # どんな予定かを見やすく表示します
+        st.sidebar.write(
+            f"**{row['曜日']}曜** {row['開始時間']}~{row['終了時間']} : {row['タスク']}"
+        )
+
+        # 【重要】ボタンに「key」を持たせることで、「どの行の削除ボタンか」をプログラムが判別できるようにします
+        if st.sidebar.button("削除", key=f"del_temp_{index}"):
+            # Pandasの drop() で該当する行のデータを削除します
+            df_template = df_template.drop(index)
+            # 削除した後の新しいデータでCSVを上書き保存します
+            df_template.to_csv(template_csv_path, index=False)
+            st.rerun()
+else:
+    st.sidebar.write("現在登録されているテンプレートはありません。")
 
 
 # ==========================================
@@ -127,33 +189,46 @@ start_of_week = base_date - timedelta(days=base_date.weekday())
 week_dates = [start_of_week + timedelta(days=i) for i in range(7)]
 week_days_str = ["月", "火", "水", "木", "金", "土", "日"]
 
+
 # ==========================================
-# --- 5. 一週間のダッシュボード（レイアウト修正版） ---
+# --- データの合体ロジック ---
+# ==========================================
+def get_combined_schedule(target_date_str, target_weekday_str):
+    if not df_template.empty and "曜日" in df_template.columns:
+        day_temp = df_template[df_template["曜日"] == target_weekday_str].copy()
+    else:
+        day_temp = pd.DataFrame(columns=["タスク", "開始時間", "終了時間"])
+
+    if not df_schedule.empty and "日付" in df_schedule.columns:
+        day_spec = df_schedule[df_schedule["日付"] == target_date_str].copy()
+    else:
+        day_spec = pd.DataFrame(columns=["タスク", "開始時間", "終了時間"])
+
+    combined = pd.concat([day_temp, day_spec], ignore_index=True)
+    return combined
+
+
+# ==========================================
+# --- 5. 一週間のダッシュボード ---
 # ==========================================
 st.header("📊 今週のスケジュール全体図")
 
-# 【修正点】画面を上段（4つ）と下段（4つ）に分割します
 cols_top = st.columns(4)
 cols_bottom = st.columns(4)
 
 for i in range(7):
     current_date_str = week_dates[i].strftime("%Y-%m-%d")
+    current_weekday_str = week_days_str[i]
 
-    if not df_schedule.empty and "日付" in df_schedule.columns:
-        day_schedule = df_schedule[df_schedule["日付"] == current_date_str].copy()
-    else:
-        day_schedule = pd.DataFrame()
+    day_schedule = get_combined_schedule(current_date_str, current_weekday_str)
 
-    # 月〜木(0, 1, 2, 3)は上段、金〜日(4, 5, 6)は下段の列に割り当てます
     if i < 4:
         target_col = cols_top[i]
     else:
         target_col = cols_bottom[i - 4]
 
     with target_col:
-        st.markdown(f"**{week_days_str[i]} ({week_dates[i].strftime('%m/%d')})**")
-
-        # グラフに使える幅が広くなったので、文字サイズを少し大きく(12)して見やすくしました
+        st.markdown(f"**{current_weekday_str} ({week_dates[i].strftime('%m/%d')})**")
         fig = create_pie_chart(day_schedule, font_size=12)
 
         if fig:
@@ -166,22 +241,25 @@ st.write("---")
 # ==========================================
 # --- 6. 曜日ごとの編集タブ ---
 # ==========================================
-st.header("✏️ 日ごとの予定編集")
+st.header("✏️ 日ごとの個別予定編集")
+st.write("※ テンプレート以外の、この日だけの特別な予定を追加します。")
+
 tabs = st.tabs(
     [f"{week_days_str[i]} ({week_dates[i].strftime('%m/%d')})" for i in range(7)]
 )
 
 for i in range(7):
     current_date_str = week_dates[i].strftime("%Y-%m-%d")
+    current_weekday_str = week_days_str[i]
 
     with tabs[i]:
         st.subheader(f"📝 {current_date_str} の予定追加")
 
-        task_name = st.text_input("タスク名", "プログラミング学習", key=f"task_{i}")
-        start_time = st.time_input("開始時間", time(9, 0), key=f"start_{i}")
-        end_time = st.time_input("終了時間", time(10, 0), key=f"end_{i}")
+        task_name = st.text_input("タスク名", "打ち合わせ", key=f"task_{i}")
+        start_time = st.time_input("開始時間", time(13, 0), key=f"start_{i}")
+        end_time = st.time_input("終了時間", time(14, 0), key=f"end_{i}")
 
-        if st.button("スケジュールに追加する", key=f"btn_{i}"):
+        if st.button("個別の予定を追加する", key=f"btn_{i}"):
             new_data = pd.DataFrame(
                 {
                     "日付": [current_date_str],
@@ -195,12 +273,9 @@ for i in range(7):
             st.success(f"{current_date_str}に予定を追加しました！")
             st.rerun()
 
-        if not df_schedule.empty and "日付" in df_schedule.columns:
-            day_schedule = df_schedule[df_schedule["日付"] == current_date_str].copy()
-        else:
-            day_schedule = pd.DataFrame()
+        day_schedule = get_combined_schedule(current_date_str, current_weekday_str)
 
-        st.subheader("📊 この日の詳細グラフ")
+        st.subheader("📊 この日の詳細グラフ（基本＋個別）")
         big_fig = create_pie_chart(day_schedule, font_size=18)
         if big_fig:
             st.plotly_chart(big_fig, use_container_width=True, key=f"tab_chart_{i}")
