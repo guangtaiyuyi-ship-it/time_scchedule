@@ -1,10 +1,11 @@
 import streamlit as st
 import pandas as pd
-from datetime import time, datetime, date
+from datetime import time, datetime, date, timedelta
 import os
 import plotly.express as px
 
 # --- 1. 画面のタイトル ---
+st.set_page_config(page_title="タイムスケジュール帳", layout="wide")
 st.title("私のタイムスケジュール帳")
 
 # --- 2. データの保存先 ---
@@ -21,75 +22,15 @@ def load_data():
 
 df_schedule = load_data()
 
-# ==========================================
-# --- 4. 表示する日付の選択（フィルター） ---
-# ==========================================
-st.header("📅 表示する日付の選択")
-view_date = st.date_input("確認したい日付を選んでください", date.today())
-view_date_str = view_date.strftime("%Y-%m-%d")
-
-if not df_schedule.empty and "日付" in df_schedule.columns:
-    df_schedule["日付"] = df_schedule["日付"].astype(str)
-    day_schedule = df_schedule[df_schedule["日付"] == view_date_str].copy()
-else:
-    day_schedule = pd.DataFrame(columns=["日付", "タスク", "開始時間", "終了時間"])
 
 # ==========================================
-# --- 5. スケジュールの入力欄 ---
+# --- グラフを作る専用の機械（関数） ---
 # ==========================================
-st.header("📝 予定の追加")
+def create_pie_chart(day_schedule, font_size=14):
+    if day_schedule.empty:
+        return None
 
-add_date = st.date_input("追加する日付", view_date)
-task_name = st.text_input("タスク名", "プログラミング学習")
-start_time = st.time_input("開始時間", time(9, 0))
-end_time = st.time_input("終了時間", time(10, 0))
-
-if st.button("スケジュールに追加する"):
-    new_data = pd.DataFrame(
-        {
-            "日付": [add_date.strftime("%Y-%m-%d")],
-            "タスク": [task_name],
-            "開始時間": [start_time.strftime("%H:%M")],
-            "終了時間": [end_time.strftime("%H:%M")],
-        }
-    )
-
-    df_schedule = pd.concat([df_schedule, new_data], ignore_index=True)
-    df_schedule.to_csv(csv_file_path, index=False)
-
-    st.success(f"{add_date.strftime('%Y-%m-%d')}に「{task_name}」を追加しました！")
-    st.rerun()
-
-# ==========================================
-# --- 6. 24時間のタイムスケジュール表示 ---
-# ==========================================
-st.header(f"⏳ {view_date_str} の24時間タイムスケジュール")
-
-hours_list = [f"{str(i).zfill(2)}:00" for i in range(24)]
-timeline_df = pd.DataFrame({"時間": hours_list, "予定": [""] * 24})
-
-if not day_schedule.empty:
-    for index, row in day_schedule.iterrows():
-        start_hour_str = str(row["開始時間"])[:2]
-        target_time = f"{start_hour_str}:00"
-        condition = timeline_df["時間"] == target_time
-        current_task = timeline_df.loc[condition, "予定"].values[0]
-
-        if current_task == "":
-            timeline_df.loc[condition, "予定"] = row["タスク"]
-        else:
-            timeline_df.loc[condition, "予定"] = current_task + " / " + row["タスク"]
-
-st.table(timeline_df)
-
-# ==========================================
-# --- 7. スケジュールの時計型円グラフ ---
-# ==========================================
-st.header(f"📊 {view_date_str} の24時間円グラフ")
-
-if not day_schedule.empty:
     day_schedule = day_schedule.sort_values(by="開始時間")
-
     pie_labels_clean = []
     pie_labels_unique = []
     pie_values = []
@@ -117,7 +58,6 @@ if not day_schedule.empty:
             pie_labels_unique.append(f"{row['タスク']}_{counter}")
             pie_values.append(task_hours)
 
-            # 【文字設定】時間の部分を <b>（太字）で囲んでいます
             time_range_str = (
                 f"<b>{actual_start.strftime('%H:%M')}~{end_dt.strftime('%H:%M')}</b>"
             )
@@ -164,21 +104,105 @@ if not day_schedule.empty:
         hole=0.4,
     )
 
-    # --- 【強化版】文字サイズの確実な変更 ---
     fig.update_traces(
         sort=False,
         direction="clockwise",
-        rotation=90,
+        rotation=0,
         texttemplate="%{customdata[0]}",
         marker=dict(colors=colors, line=dict(color="#FFFFFF", width=2)),
         textposition="inside",
-        # グラフ内部のフォントサイズを「20」に強制します
-        insidetextfont=dict(size=20),
-        textfont_size=20,
+        textfont=dict(size=font_size),
     )
 
-    fig.update_layout(showlegend=False)
+    fig.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10))
+    return fig
 
-    st.plotly_chart(fig)
-else:
-    st.write("この日の予定を追加すると、ここに円グラフが表示されます。")
+
+# ==========================================
+# --- 4. 一週間の日付を計算する ---
+# ==========================================
+st.header("📅 表示する週の選択")
+base_date = st.date_input("基準となる日付を選んでください", date.today())
+start_of_week = base_date - timedelta(days=base_date.weekday())
+week_dates = [start_of_week + timedelta(days=i) for i in range(7)]
+week_days_str = ["月", "火", "水", "木", "金", "土", "日"]
+
+# ==========================================
+# --- 5. 一週間のダッシュボード（レイアウト修正版） ---
+# ==========================================
+st.header("📊 今週のスケジュール全体図")
+
+# 【修正点】画面を上段（4つ）と下段（4つ）に分割します
+cols_top = st.columns(4)
+cols_bottom = st.columns(4)
+
+for i in range(7):
+    current_date_str = week_dates[i].strftime("%Y-%m-%d")
+
+    if not df_schedule.empty and "日付" in df_schedule.columns:
+        day_schedule = df_schedule[df_schedule["日付"] == current_date_str].copy()
+    else:
+        day_schedule = pd.DataFrame()
+
+    # 月〜木(0, 1, 2, 3)は上段、金〜日(4, 5, 6)は下段の列に割り当てます
+    if i < 4:
+        target_col = cols_top[i]
+    else:
+        target_col = cols_bottom[i - 4]
+
+    with target_col:
+        st.markdown(f"**{week_days_str[i]} ({week_dates[i].strftime('%m/%d')})**")
+
+        # グラフに使える幅が広くなったので、文字サイズを少し大きく(12)して見やすくしました
+        fig = create_pie_chart(day_schedule, font_size=12)
+
+        if fig:
+            st.plotly_chart(fig, use_container_width=True, key=f"dash_chart_{i}")
+        else:
+            st.write("予定なし")
+
+st.write("---")
+
+# ==========================================
+# --- 6. 曜日ごとの編集タブ ---
+# ==========================================
+st.header("✏️ 日ごとの予定編集")
+tabs = st.tabs(
+    [f"{week_days_str[i]} ({week_dates[i].strftime('%m/%d')})" for i in range(7)]
+)
+
+for i in range(7):
+    current_date_str = week_dates[i].strftime("%Y-%m-%d")
+
+    with tabs[i]:
+        st.subheader(f"📝 {current_date_str} の予定追加")
+
+        task_name = st.text_input("タスク名", "プログラミング学習", key=f"task_{i}")
+        start_time = st.time_input("開始時間", time(9, 0), key=f"start_{i}")
+        end_time = st.time_input("終了時間", time(10, 0), key=f"end_{i}")
+
+        if st.button("スケジュールに追加する", key=f"btn_{i}"):
+            new_data = pd.DataFrame(
+                {
+                    "日付": [current_date_str],
+                    "タスク": [task_name],
+                    "開始時間": [start_time.strftime("%H:%M")],
+                    "終了時間": [end_time.strftime("%H:%M")],
+                }
+            )
+            df_schedule = pd.concat([df_schedule, new_data], ignore_index=True)
+            df_schedule.to_csv(csv_file_path, index=False)
+            st.success(f"{current_date_str}に予定を追加しました！")
+            st.rerun()
+
+        if not df_schedule.empty and "日付" in df_schedule.columns:
+            day_schedule = df_schedule[df_schedule["日付"] == current_date_str].copy()
+        else:
+            day_schedule = pd.DataFrame()
+
+        st.subheader("📊 この日の詳細グラフ")
+        big_fig = create_pie_chart(day_schedule, font_size=18)
+        if big_fig:
+            st.plotly_chart(big_fig, use_container_width=True, key=f"tab_chart_{i}")
+        else:
+            st.write("予定を追加するとグラフが表示されます。")
