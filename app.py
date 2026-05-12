@@ -32,7 +32,7 @@ df_schedule = load_data()
 df_template = load_template_data()
 
 # ==========================================
-# --- 左側のサイドバー（テンプレート設定） ---
+# --- 左側のサイドバー（テンプレート設定・削除） ---
 # ==========================================
 st.sidebar.header("⚙️ 曜日ごとの基本テンプレート")
 
@@ -61,24 +61,15 @@ if st.sidebar.button("テンプレートに登録する"):
 
 st.sidebar.markdown("---")
 
-# ==========================================
-# --- ★新機能★ テンプレートの削除機能 ---
-# ==========================================
 st.sidebar.subheader("🗑️ 登録済みテンプレートの管理")
 
 if not df_template.empty:
-    # 登録されているテンプレートを上から順番に表示します
     for index, row in df_template.iterrows():
-        # どんな予定かを見やすく表示します
         st.sidebar.write(
             f"**{row['曜日']}曜** {row['開始時間']}~{row['終了時間']} : {row['タスク']}"
         )
-
-        # 【重要】ボタンに「key」を持たせることで、「どの行の削除ボタンか」をプログラムが判別できるようにします
         if st.sidebar.button("削除", key=f"del_temp_{index}"):
-            # Pandasの drop() で該当する行のデータを削除します
             df_template = df_template.drop(index)
-            # 削除した後の新しいデータでCSVを上書き保存します
             df_template.to_csv(template_csv_path, index=False)
             st.rerun()
 else:
@@ -242,7 +233,7 @@ st.write("---")
 # --- 6. 曜日ごとの編集タブ ---
 # ==========================================
 st.header("✏️ 日ごとの個別予定編集")
-st.write("※ テンプレート以外の、この日だけの特別な予定を追加します。")
+st.write("※ テンプレート以外の、この日だけの特別な予定を追加・削除します。")
 
 tabs = st.tabs(
     [f"{week_days_str[i]} ({week_dates[i].strftime('%m/%d')})" for i in range(7)]
@@ -253,6 +244,7 @@ for i in range(7):
     current_weekday_str = week_days_str[i]
 
     with tabs[i]:
+        # --- A. 個別予定の追加 ---
         st.subheader(f"📝 {current_date_str} の予定追加")
 
         task_name = st.text_input("タスク名", "打ち合わせ", key=f"task_{i}")
@@ -273,6 +265,37 @@ for i in range(7):
             st.success(f"{current_date_str}に予定を追加しました！")
             st.rerun()
 
+        st.markdown("---")
+
+        # ==========================================
+        # --- B. 個別予定の管理（削除） ---
+        # ==========================================
+        st.subheader("🗑️ この日の個別予定の管理")
+
+        if not df_schedule.empty and "日付" in df_schedule.columns:
+            today_tasks = df_schedule[df_schedule["日付"] == current_date_str]
+
+            if not today_tasks.empty:
+                for index, row in today_tasks.iterrows():
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.write(
+                            f"**{row['開始時間']}~{row['終了時間']}** : {row['タスク']}"
+                        )
+                    with col2:
+                        if st.button("削除", key=f"del_task_{index}_{i}"):
+                            # 【修正点】global宣言を削除し、そのままデータを切り捨てて保存します
+                            df_schedule = df_schedule.drop(index)
+                            df_schedule.to_csv(csv_file_path, index=False)
+                            st.rerun()
+            else:
+                st.write("この日に追加された個別予定はありません。")
+        else:
+            st.write("この日に追加された個別予定はありません。")
+
+        st.markdown("---")
+
+        # --- C. 大きな円グラフの表示 ---
         day_schedule = get_combined_schedule(current_date_str, current_weekday_str)
 
         st.subheader("📊 この日の詳細グラフ（基本＋個別）")
