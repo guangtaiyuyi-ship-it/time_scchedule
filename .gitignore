@@ -1,11 +1,18 @@
-# .gitignore
-
-# Python関連のキャッシュファイル
+# Pythonが自動で作る不要なシステムファイル（キャッシュ）
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
 
-# 仮想環境
+# 仮想環境（もし作っている場合）
+.venv/
 venv/
 env/
-.env
+
+# アプリケーションの個人的なデータファイル（機密情報）
+# これらを無視することで、自分のスケジュールがGitHubに公開されません
+schedule.csv
+template_schedule.csv
+categories.csv
+
+# OSが自動で作る不要なファイル
+.DS_Store
+Thumbs.db
