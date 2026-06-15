@@ -567,7 +567,7 @@ st.header("✏️ 日ごとの個別予定編集")
 tabs = st.tabs(
     [
         f"{week_days_str[i]} ({week_dates[i].strftime('%m/%d')})"
-        for i in range(7]
+        for i in range(7)
     ]
 )
 
