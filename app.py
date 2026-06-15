@@ -9,6 +9,22 @@ import streamlit as st
 st.set_page_config(page_title="タイムスケジュール帳", layout="wide")
 st.title("私のタイムスケジュール帳")
 
+# ★ 新機能: 15分刻みと1分刻みの切り替えラジオボタン
+st.markdown("### 🛠️ 入力設定")
+time_mode = st.radio(
+    "時間の入力モードを選択してください：",
+    [
+        "🕐 直感モード (15分刻み / 時計の針UI優先)",
+        "⌨️ 詳細モード (1分刻み / 23:59などの入力用)",
+    ],
+    horizontal=True,
+)
+
+# モードに応じてstep（秒数）を切り替え (15分 = 900秒, 1分 = 60秒)
+current_step = 900 if "直感モード" in time_mode else 60
+
+st.write("---")
+
 # --- 2. データの保存先 ---
 csv_file_path = "schedule.csv"
 template_csv_path = "template_schedule.csv"
@@ -176,11 +192,11 @@ render_category_adder("sidebar")
 
 temp_task = st.sidebar.text_input("タスク名", "ルーティン作業", key="t_task")
 
-# ★ 修正ポイント: step=60 を指定して1分刻みに変更（時計の針やキーボードで自由に入力可能に）
+# ★ 修正ポイント: stepを動的に変更
 temp_start = st.sidebar.time_input(
-    "開始時間", time(7, 0), key="t_start", step=60
+    "開始時間", time(7, 0), key="t_start", step=current_step
 )
-temp_end = st.sidebar.time_input("終了時間", time(8, 0), key="t_end", step=60)
+temp_end = st.sidebar.time_input("終了時間", time(8, 0), key="t_end", step=current_step)
 
 if st.sidebar.button("テンプレートに登録する"):
     new_start_str = temp_start.strftime("%H:%M")
@@ -207,7 +223,11 @@ if st.sidebar.button("テンプレートに登録する"):
             pd.concat([df_template, new_temp], ignore_index=True)
         )
         df_template.to_csv(template_csv_path, index=False)
-        st.sidebar.success("登録しました！")
+
+        # ★ 新機能: 追加したテンプレート時間の詳細をセッション状態に保存して共有
+        st.session_state["last_added_msg"] = (
+            f"【テンプレート登録完了】\n曜日: {temp_day}曜 | 時間: {new_start_str}～{new_end_str} | タスク: {temp_task} ({temp_cat})"
+        )
         st.rerun()
 
 st.sidebar.markdown("---")
@@ -233,18 +253,14 @@ if not df_template.empty:
             edit_t_day = st.selectbox(
                 "曜日",
                 ["月", "火", "水", "木", "金", "土", "日"],
-                index=["月", "火", "水", "木", "金", "土", "日"].index(
-                    row["曜日"]
-                ),
+                index=["月", "火", "水", "木", "金", "土", "日"].index(row["曜日"]),
                 key=f"edit_t_day_{index}",
             )
 
             current_cat = row.get("カテゴリ", "未分類")
             cat_options = selectable_categories
             cat_index = (
-                cat_options.index(current_cat)
-                if current_cat in cat_options
-                else 0
+                cat_options.index(current_cat) if current_cat in cat_options else 0
             )
             edit_t_cat = st.selectbox(
                 "カテゴリ",
@@ -260,25 +276,26 @@ if not df_template.empty:
             current_t_start = datetime.strptime(row["開始時間"], "%H:%M").time()
             current_t_end = datetime.strptime(row["終了時間"], "%H:%M").time()
 
-            # ★ 修正ポイント: 編集画面でも step=60 を指定
+            # ★ 修正ポイント: stepを動的に変更
             edit_t_start = st.time_input(
                 "開始時間",
                 current_t_start,
                 key=f"edit_t_start_{index}",
-                step=60,
+                step=current_step,
             )
             edit_t_end = st.time_input(
-                "終了時間", current_t_end, key=f"edit_t_end_{index}", step=60
+                "終了時間",
+                current_t_end,
+                key=f"edit_t_end_{index}",
+                step=current_step,
             )
 
             if st.button("テンプレートを更新する", key=f"upd_temp_btn_{index}"):
                 new_s_str = edit_t_start.strftime("%H:%M")
                 new_e_str = edit_t_end.strftime("%H:%M")
 
-                # 自分自身を除いた同じ曜日のテンプレートで重複チェック
                 other_temps = df_template[
-                    (df_template["曜日"] == edit_t_day)
-                    & (df_template.index != index)
+                    (df_template["曜日"] == edit_t_day) & (df_template.index != index)
                 ]
 
                 if new_s_str >= new_e_str:
@@ -295,7 +312,9 @@ if not df_template.empty:
                     df_template.at[index, "カテゴリ"] = edit_t_cat
                     df_template = sort_template(df_template)
                     df_template.to_csv(template_csv_path, index=False)
-                    st.success("✅ テンプレートを更新しました！")
+                    st.session_state["last_added_msg"] = (
+                        f"【テンプレート更新完了】\n曜日: {edit_t_day}曜 | 時間: {new_s_str}～{new_e_str} | タスク: {edit_t_task}"
+                    )
                     st.rerun()
 
         st.sidebar.write("---")
@@ -324,22 +343,20 @@ for index, row in df_categories.iterrows():
             df_categories.to_csv(category_csv_path, index=False)
 
             if not df_schedule.empty and "カテゴリ" in df_schedule.columns:
-                df_schedule.loc[
-                    df_schedule["カテゴリ"] == cat_name, "カテゴリ"
-                ] = "未分類"
+                df_schedule.loc[df_schedule["カテゴリ"] == cat_name, "カテゴリ"] = (
+                    "未分類"
+                )
                 df_schedule.to_csv(csv_file_path, index=False)
             if not df_template.empty and "カテゴリ" in df_template.columns:
-                df_template.loc[
-                    df_template["カテゴリ"] == cat_name, "カテゴリ"
-                ] = "未分類"
+                df_template.loc[df_template["カテゴリ"] == cat_name, "カテゴリ"] = (
+                    "未分類"
+                )
                 df_template.to_csv(template_csv_path, index=False)
 
             st.rerun()
 
     with st.sidebar.expander("✏️ 編集", expanded=False):
-        edit_c_name = st.text_input(
-            "新しい名前", cat_name, key=f"edit_c_name_{index}"
-        )
+        edit_c_name = st.text_input("新しい名前", cat_name, key=f"edit_c_name_{index}")
         edit_c_color = st.color_picker(
             "新しい色", row["色"], key=f"edit_c_color_{index}"
         )
@@ -365,18 +382,12 @@ for index, row in df_categories.iterrows():
                 df_categories.to_csv(category_csv_path, index=False)
 
                 if edit_c_name != cat_name:
-                    if (
-                        not df_schedule.empty
-                        and "カテゴリ" in df_schedule.columns
-                    ):
+                    if not df_schedule.empty and "カテゴリ" in df_schedule.columns:
                         df_schedule.loc[
                             df_schedule["カテゴリ"] == cat_name, "カテゴリ"
                         ] = edit_c_name
                         df_schedule.to_csv(csv_file_path, index=False)
-                    if (
-                        not df_template.empty
-                        and "カテゴリ" in df_template.columns
-                    ):
+                    if not df_template.empty and "カテゴリ" in df_template.columns:
                         df_template.loc[
                             df_template["カテゴリ"] == cat_name, "カテゴリ"
                         ] = edit_c_name
@@ -420,14 +431,14 @@ def create_pie_chart(day_schedule, font_size=14):
             pie_labels_unique.append(f"{row['タスク']}_{counter}")
             pie_values.append(task_hours)
 
-            time_range_str = f"<b>{actual_start.strftime('%H:%M')}~{end_dt.strftime('%H:%M')}</b>"
+            time_range_str = (
+                f"<b>{actual_start.strftime('%H:%M')}~{end_dt.strftime('%H:%M')}</b>"
+            )
             display_texts.append(f"{row['タスク']}<br>{time_range_str}")
 
             cat = row.get("カテゴリ", "未分類")
             slice_colors.append(
-                CATEGORY_COLORS.get(
-                    cat, CATEGORY_COLORS.get("未分類", "#7f7f7f")
-                )
+                CATEGORY_COLORS.get(cat, CATEGORY_COLORS.get("未分類", "#7f7f7f"))
             )
 
             current_dt = end_dt
@@ -491,6 +502,12 @@ def get_combined_schedule(target_date_str, target_weekday_str):
         else pd.DataFrame()
     )
     return pd.concat([day_temp, day_spec], ignore_index=True)
+
+
+# ★ 新機能: 追加・更新された時間を画面上で共有表示するエリア
+if "last_added_msg" in st.session_state:
+    st.success(st.session_state["last_added_msg"])
+    # 1回表示したら確認できるように保持（クリアしたい場合は del st.session_state["last_added_msg"]）
 
 
 # ==========================================
@@ -565,10 +582,7 @@ st.write("---")
 # ==========================================
 st.header("✏️ 日ごとの個別予定編集")
 tabs = st.tabs(
-    [
-        f"{week_days_str[i]} ({week_dates[i].strftime('%m/%d')})"
-        for i in range(7)
-    ]
+    [f"{week_days_str[i]} ({week_dates[i].strftime('%m/%d')})" for i in range(7)]
 )
 
 for i in range(7):
@@ -585,14 +599,14 @@ for i in range(7):
         with col_task:
             task_name = st.text_input("タスク名", "打ち合わせ", key=f"task_{i}")
         with col_start:
-            # ★ 修正ポイント: step=60 を指定して1分刻みに変更
+            # ★ 修正ポイント: stepを動的に変更
             start_time = st.time_input(
-                "開始時間", time(13, 0), key=f"start_{i}", step=60
+                "開始時間", time(13, 0), key=f"start_{i}", step=current_step
             )
         with col_end:
-            # ★ 修正ポイント: step=60 を指定して1分刻みに変更
+            # ★ 修正ポイント: stepを動的に変更
             end_time = st.time_input(
-                "終了時間", time(14, 0), key=f"end_{i}", step=60
+                "終了時間", time(14, 0), key=f"end_{i}", step=current_step
             )
 
         if st.button("個別の予定を追加する", key=f"btn_{i}"):
@@ -619,11 +633,13 @@ for i in range(7):
                         "カテゴリ": [task_cat],
                     }
                 )
-                df_schedule = pd.concat(
-                    [df_schedule, new_data], ignore_index=True
-                )
+                df_schedule = pd.concat([df_schedule, new_data], ignore_index=True)
                 df_schedule.to_csv(csv_file_path, index=False)
-                st.success("予定を追加しました！")
+
+                # ★ 新機能: 追加した個別予定の情報をセッションに保存して共有
+                st.session_state["last_added_msg"] = (
+                    f"【個別予定登録完了】\n日付: {current_date_str} ({current_weekday_str}) | 時間: {new_start_str}～{new_end_str} | タスク: {task_name} ({task_cat})"
+                )
                 st.rerun()
 
         st.markdown("---")
@@ -645,6 +661,9 @@ for i in range(7):
                         if st.button("削除", key=f"del_task_{index}_{i}"):
                             df_schedule = df_schedule.drop(index)
                             df_schedule.to_csv(csv_file_path, index=False)
+                            st.session_state["last_added_msg"] = (
+                                f"❌ 予定「{row['タスク']}」を削除しました。"
+                            )
                             st.rerun()
 
                     with st.expander(
@@ -657,23 +676,21 @@ for i in range(7):
                             row["終了時間"], "%H:%M"
                         ).time()
 
-                        # ★ 修正ポイント: 編集画面でも step=60 を指定
+                        # ★ 修正ポイント: stepを動的に変更
                         edit_s = st.time_input(
                             "新しい開始時間",
                             current_s_time,
                             key=f"edit_s_{index}_{i}",
-                            step=60,
+                            step=current_step,
                         )
                         edit_e = st.time_input(
                             "新しい終了時間",
                             current_e_time,
                             key=f"edit_e_{index}_{i}",
-                            step=60,
+                            step=current_step,
                         )
 
-                        if st.button(
-                            "時間を更新する", key=f"update_{index}_{i}"
-                        ):
+                        if st.button("時間を更新する", key=f"update_{index}_{i}"):
                             new_s_str = edit_s.strftime("%H:%M")
                             new_e_str = edit_e.strftime("%H:%M")
 
@@ -708,7 +725,9 @@ for i in range(7):
                                 df_schedule.at[index, "開始時間"] = new_s_str
                                 df_schedule.at[index, "終了時間"] = new_e_str
                                 df_schedule.to_csv(csv_file_path, index=False)
-                                st.success("時間を更新しました！")
+                                st.session_state["last_added_msg"] = (
+                                    f"【予定時間更新完了】\nタスク: {row['タスク']} | 新しい時間: {new_s_str}～{new_e_str}"
+                                )
                                 st.rerun()
                     st.write("---")
             else:
@@ -717,14 +736,10 @@ for i in range(7):
             st.write("この日に追加された個別予定はありません。")
 
         st.markdown("---")
-        day_schedule = get_combined_schedule(
-            current_date_str, current_weekday_str
-        )
+        day_schedule = get_combined_schedule(current_date_str, current_weekday_str)
         st.subheader("📊 この日の詳細グラフ（基本＋個別）")
         big_fig = create_pie_chart(day_schedule, font_size=18)
         if big_fig:
-            st.plotly_chart(
-                big_fig, use_container_width=True, key=f"tab_chart_{i}"
-            )
+            st.plotly_chart(big_fig, use_container_width=True, key=f"tab_chart_{i}")
         else:
             st.write("予定を追加するとグラフが表示されます。")
