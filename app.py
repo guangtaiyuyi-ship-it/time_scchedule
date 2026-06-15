@@ -1,9 +1,9 @@
-import streamlit as st
-import pandas as pd
-from datetime import time, datetime, date, timedelta
-import os
-import plotly.express as px
 import math
+import os
+from datetime import date, datetime, time, timedelta
+import pandas as pd
+import plotly.express as px
+import streamlit as st
 
 # --- 1. 画面のタイトルと基本設定 ---
 st.set_page_config(page_title="タイムスケジュール帳", layout="wide")
@@ -175,8 +175,12 @@ temp_cat = st.sidebar.selectbox("カテゴリ", selectable_categories, key="t_ca
 render_category_adder("sidebar")
 
 temp_task = st.sidebar.text_input("タスク名", "ルーティン作業", key="t_task")
-temp_start = st.sidebar.time_input("開始時間", time(7, 0), key="t_start")
-temp_end = st.sidebar.time_input("終了時間", time(8, 0), key="t_end")
+
+# ★ 修正ポイント: step=60 を指定して1分刻みに変更（時計の針やキーボードで自由に入力可能に）
+temp_start = st.sidebar.time_input(
+    "開始時間", time(7, 0), key="t_start", step=60
+)
+temp_end = st.sidebar.time_input("終了時間", time(8, 0), key="t_end", step=60)
 
 if st.sidebar.button("テンプレートに登録する"):
     new_start_str = temp_start.strftime("%H:%M")
@@ -223,20 +227,24 @@ if not df_template.empty:
                 st.rerun()
 
         # ==========================================
-        # ★ テンプレート編集エクスパンダー（新機能）
+        # ★ テンプレート編集エクスパンダー
         # ==========================================
         with st.sidebar.expander(f"✏️ 編集", expanded=False):
             edit_t_day = st.selectbox(
                 "曜日",
                 ["月", "火", "水", "木", "金", "土", "日"],
-                index=["月", "火", "水", "木", "金", "土", "日"].index(row["曜日"]),
+                index=["月", "火", "水", "木", "金", "土", "日"].index(
+                    row["曜日"]
+                ),
                 key=f"edit_t_day_{index}",
             )
 
             current_cat = row.get("カテゴリ", "未分類")
             cat_options = selectable_categories
             cat_index = (
-                cat_options.index(current_cat) if current_cat in cat_options else 0
+                cat_options.index(current_cat)
+                if current_cat in cat_options
+                else 0
             )
             edit_t_cat = st.selectbox(
                 "カテゴリ",
@@ -251,11 +259,16 @@ if not df_template.empty:
 
             current_t_start = datetime.strptime(row["開始時間"], "%H:%M").time()
             current_t_end = datetime.strptime(row["終了時間"], "%H:%M").time()
+
+            # ★ 修正ポイント: 編集画面でも step=60 を指定
             edit_t_start = st.time_input(
-                "開始時間", current_t_start, key=f"edit_t_start_{index}"
+                "開始時間",
+                current_t_start,
+                key=f"edit_t_start_{index}",
+                step=60,
             )
             edit_t_end = st.time_input(
-                "終了時間", current_t_end, key=f"edit_t_end_{index}"
+                "終了時間", current_t_end, key=f"edit_t_end_{index}", step=60
             )
 
             if st.button("テンプレートを更新する", key=f"upd_temp_btn_{index}"):
@@ -264,7 +277,8 @@ if not df_template.empty:
 
                 # 自分自身を除いた同じ曜日のテンプレートで重複チェック
                 other_temps = df_template[
-                    (df_template["曜日"] == edit_t_day) & (df_template.index != index)
+                    (df_template["曜日"] == edit_t_day)
+                    & (df_template.index != index)
                 ]
 
                 if new_s_str >= new_e_str:
@@ -310,20 +324,22 @@ for index, row in df_categories.iterrows():
             df_categories.to_csv(category_csv_path, index=False)
 
             if not df_schedule.empty and "カテゴリ" in df_schedule.columns:
-                df_schedule.loc[df_schedule["カテゴリ"] == cat_name, "カテゴリ"] = (
-                    "未分類"
-                )
+                df_schedule.loc[
+                    df_schedule["カテゴリ"] == cat_name, "カテゴリ"
+                ] = "未分類"
                 df_schedule.to_csv(csv_file_path, index=False)
             if not df_template.empty and "カテゴリ" in df_template.columns:
-                df_template.loc[df_template["カテゴリ"] == cat_name, "カテゴリ"] = (
-                    "未分類"
-                )
+                df_template.loc[
+                    df_template["カテゴリ"] == cat_name, "カテゴリ"
+                ] = "未分類"
                 df_template.to_csv(template_csv_path, index=False)
 
             st.rerun()
 
     with st.sidebar.expander("✏️ 編集", expanded=False):
-        edit_c_name = st.text_input("新しい名前", cat_name, key=f"edit_c_name_{index}")
+        edit_c_name = st.text_input(
+            "新しい名前", cat_name, key=f"edit_c_name_{index}"
+        )
         edit_c_color = st.color_picker(
             "新しい色", row["色"], key=f"edit_c_color_{index}"
         )
@@ -349,12 +365,18 @@ for index, row in df_categories.iterrows():
                 df_categories.to_csv(category_csv_path, index=False)
 
                 if edit_c_name != cat_name:
-                    if not df_schedule.empty and "カテゴリ" in df_schedule.columns:
+                    if (
+                        not df_schedule.empty
+                        and "カテゴリ" in df_schedule.columns
+                    ):
                         df_schedule.loc[
                             df_schedule["カテゴリ"] == cat_name, "カテゴリ"
                         ] = edit_c_name
                         df_schedule.to_csv(csv_file_path, index=False)
-                    if not df_template.empty and "カテゴリ" in df_template.columns:
+                    if (
+                        not df_template.empty
+                        and "カテゴリ" in df_template.columns
+                    ):
                         df_template.loc[
                             df_template["カテゴリ"] == cat_name, "カテゴリ"
                         ] = edit_c_name
@@ -398,14 +420,14 @@ def create_pie_chart(day_schedule, font_size=14):
             pie_labels_unique.append(f"{row['タスク']}_{counter}")
             pie_values.append(task_hours)
 
-            time_range_str = (
-                f"<b>{actual_start.strftime('%H:%M')}~{end_dt.strftime('%H:%M')}</b>"
-            )
+            time_range_str = f"<b>{actual_start.strftime('%H:%M')}~{end_dt.strftime('%H:%M')}</b>"
             display_texts.append(f"{row['タスク']}<br>{time_range_str}")
 
             cat = row.get("カテゴリ", "未分類")
             slice_colors.append(
-                CATEGORY_COLORS.get(cat, CATEGORY_COLORS.get("未分類", "#7f7f7f"))
+                CATEGORY_COLORS.get(
+                    cat, CATEGORY_COLORS.get("未分類", "#7f7f7f")
+                )
             )
 
             current_dt = end_dt
@@ -543,7 +565,10 @@ st.write("---")
 # ==========================================
 st.header("✏️ 日ごとの個別予定編集")
 tabs = st.tabs(
-    [f"{week_days_str[i]} ({week_dates[i].strftime('%m/%d')})" for i in range(7)]
+    [
+        f"{week_days_str[i]} ({week_dates[i].strftime('%m/%d')})"
+        for i in range(7]
+    ]
 )
 
 for i in range(7):
@@ -560,9 +585,15 @@ for i in range(7):
         with col_task:
             task_name = st.text_input("タスク名", "打ち合わせ", key=f"task_{i}")
         with col_start:
-            start_time = st.time_input("開始時間", time(13, 0), key=f"start_{i}")
+            # ★ 修正ポイント: step=60 を指定して1分刻みに変更
+            start_time = st.time_input(
+                "開始時間", time(13, 0), key=f"start_{i}", step=60
+            )
         with col_end:
-            end_time = st.time_input("終了時間", time(14, 0), key=f"end_{i}")
+            # ★ 修正ポイント: step=60 を指定して1分刻みに変更
+            end_time = st.time_input(
+                "終了時間", time(14, 0), key=f"end_{i}", step=60
+            )
 
         if st.button("個別の予定を追加する", key=f"btn_{i}"):
             new_start_str = start_time.strftime("%H:%M")
@@ -588,7 +619,9 @@ for i in range(7):
                         "カテゴリ": [task_cat],
                     }
                 )
-                df_schedule = pd.concat([df_schedule, new_data], ignore_index=True)
+                df_schedule = pd.concat(
+                    [df_schedule, new_data], ignore_index=True
+                )
                 df_schedule.to_csv(csv_file_path, index=False)
                 st.success("予定を追加しました！")
                 st.rerun()
@@ -624,14 +657,23 @@ for i in range(7):
                             row["終了時間"], "%H:%M"
                         ).time()
 
+                        # ★ 修正ポイント: 編集画面でも step=60 を指定
                         edit_s = st.time_input(
-                            "新しい開始時間", current_s_time, key=f"edit_s_{index}_{i}"
+                            "新しい開始時間",
+                            current_s_time,
+                            key=f"edit_s_{index}_{i}",
+                            step=60,
                         )
                         edit_e = st.time_input(
-                            "新しい終了時間", current_e_time, key=f"edit_e_{index}_{i}"
+                            "新しい終了時間",
+                            current_e_time,
+                            key=f"edit_e_{index}_{i}",
+                            step=60,
                         )
 
-                        if st.button("時間を更新する", key=f"update_{index}_{i}"):
+                        if st.button(
+                            "時間を更新する", key=f"update_{index}_{i}"
+                        ):
                             new_s_str = edit_s.strftime("%H:%M")
                             new_e_str = edit_e.strftime("%H:%M")
 
@@ -675,10 +717,14 @@ for i in range(7):
             st.write("この日に追加された個別予定はありません。")
 
         st.markdown("---")
-        day_schedule = get_combined_schedule(current_date_str, current_weekday_str)
+        day_schedule = get_combined_schedule(
+            current_date_str, current_weekday_str
+        )
         st.subheader("📊 この日の詳細グラフ（基本＋個別）")
         big_fig = create_pie_chart(day_schedule, font_size=18)
         if big_fig:
-            st.plotly_chart(big_fig, use_container_width=True, key=f"tab_chart_{i}")
+            st.plotly_chart(
+                big_fig, use_container_width=True, key=f"tab_chart_{i}"
+            )
         else:
             st.write("予定を追加するとグラフが表示されます。")
