@@ -15,4 +15,5 @@ categories.csv
 
 # OSが自動で作る不要なファイル
 .DS_Store
-Thumbs.db
+Thumbs.dbcategories.csv
+template_schedule.csv
