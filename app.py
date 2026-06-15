@@ -58,12 +58,25 @@ def load_data():
         )
 
 
+DAY_ORDER = ["月", "火", "水", "木", "金", "土", "日"]
+
+
+def sort_template(df):
+    """テンプレートを曜日順→開始時間順にソートして返す"""
+    if df.empty:
+        return df
+    df = df.copy()
+    df["_day_order"] = df["曜日"].map({d: i for i, d in enumerate(DAY_ORDER)})
+    df = df.sort_values(["_day_order", "開始時間"]).drop(columns=["_day_order"])
+    return df.reset_index(drop=True)
+
+
 def load_template_data():
     if os.path.exists(template_csv_path):
         df = pd.read_csv(template_csv_path)
         if "カテゴリ" not in df.columns:
             df["カテゴリ"] = "未分類"
-        return df
+        return sort_template(df)
     else:
         return pd.DataFrame(
             columns=["曜日", "タスク", "開始時間", "終了時間", "カテゴリ"]
@@ -80,9 +93,6 @@ selectable_categories = [c for c in CATEGORIES if c != "空き時間"]
 PROTECTED_CATS = ["未分類", "空き時間"]
 
 
-# ==========================================
-# --- 色が似ているかチェックする関数 ---
-# ==========================================
 def hex_to_rgb(hex_color):
     hex_color = hex_color.lstrip("#")
     return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
@@ -102,9 +112,6 @@ def is_color_too_similar(new_hex, existing_hexes, threshold=40):
     return False
 
 
-# ==========================================
-# --- カテゴリ追加メニューの共通関数 ---
-# ==========================================
 def render_category_adder(key_prefix):
     with st.expander("➕ 新しいカテゴリを追加", expanded=False):
         new_cat_name = st.text_input("カテゴリ名", key=f"{key_prefix}_new_c_name")
@@ -142,9 +149,6 @@ def render_category_adder(key_prefix):
                 st.rerun()
 
 
-# ==========================================
-# --- スケジュールの重複をチェックする関数 ---
-# ==========================================
 def is_overlapping(new_start_str, new_end_str, existing_df):
     if existing_df.empty:
         return False
@@ -195,7 +199,9 @@ if st.sidebar.button("テンプレートに登録する"):
                 "カテゴリ": [temp_cat],
             }
         )
-        df_template = pd.concat([df_template, new_temp], ignore_index=True)
+        df_template = sort_template(
+            pd.concat([df_template, new_temp], ignore_index=True)
+        )
         df_template.to_csv(template_csv_path, index=False)
         st.sidebar.success("登録しました！")
         st.rerun()
@@ -204,15 +210,80 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("🗑️ 登録済みテンプレート")
 if not df_template.empty:
     for index, row in df_template.iterrows():
-        # 【修正点】** ではなく、HTMLの <b> タグを使って太字にします
         st.sidebar.markdown(
             f"<div style='white-space: nowrap; font-size: 14px;'><b>{row['曜日']}</b> {row['開始時間']}~{row['終了時間']} : {row['タスク']} ({row['カテゴリ']})</div>",
             unsafe_allow_html=True,
         )
-        if st.sidebar.button("削除", key=f"del_temp_{index}"):
-            df_template = df_template.drop(index)
-            df_template.to_csv(template_csv_path, index=False)
-            st.rerun()
+
+        col_del, col_spacer = st.sidebar.columns([1, 2])
+        with col_del:
+            if st.button("削除", key=f"del_temp_{index}"):
+                df_template = df_template.drop(index)
+                df_template.to_csv(template_csv_path, index=False)
+                st.rerun()
+
+        # ==========================================
+        # ★ テンプレート編集エクスパンダー（新機能）
+        # ==========================================
+        with st.sidebar.expander(f"✏️ 編集", expanded=False):
+            edit_t_day = st.selectbox(
+                "曜日",
+                ["月", "火", "水", "木", "金", "土", "日"],
+                index=["月", "火", "水", "木", "金", "土", "日"].index(row["曜日"]),
+                key=f"edit_t_day_{index}",
+            )
+
+            current_cat = row.get("カテゴリ", "未分類")
+            cat_options = selectable_categories
+            cat_index = (
+                cat_options.index(current_cat) if current_cat in cat_options else 0
+            )
+            edit_t_cat = st.selectbox(
+                "カテゴリ",
+                cat_options,
+                index=cat_index,
+                key=f"edit_t_cat_{index}",
+            )
+
+            edit_t_task = st.text_input(
+                "タスク名", row["タスク"], key=f"edit_t_task_{index}"
+            )
+
+            current_t_start = datetime.strptime(row["開始時間"], "%H:%M").time()
+            current_t_end = datetime.strptime(row["終了時間"], "%H:%M").time()
+            edit_t_start = st.time_input(
+                "開始時間", current_t_start, key=f"edit_t_start_{index}"
+            )
+            edit_t_end = st.time_input(
+                "終了時間", current_t_end, key=f"edit_t_end_{index}"
+            )
+
+            if st.button("テンプレートを更新する", key=f"upd_temp_btn_{index}"):
+                new_s_str = edit_t_start.strftime("%H:%M")
+                new_e_str = edit_t_end.strftime("%H:%M")
+
+                # 自分自身を除いた同じ曜日のテンプレートで重複チェック
+                other_temps = df_template[
+                    (df_template["曜日"] == edit_t_day) & (df_template.index != index)
+                ]
+
+                if new_s_str >= new_e_str:
+                    st.error("終了時間は開始時間より後にしてください。")
+                elif is_overlapping(new_s_str, new_e_str, other_temps):
+                    st.error(
+                        f"❌ {edit_t_day}曜のこの時間帯には別のテンプレートが入っています！"
+                    )
+                else:
+                    df_template.at[index, "曜日"] = edit_t_day
+                    df_template.at[index, "タスク"] = edit_t_task
+                    df_template.at[index, "開始時間"] = new_s_str
+                    df_template.at[index, "終了時間"] = new_e_str
+                    df_template.at[index, "カテゴリ"] = edit_t_cat
+                    df_template = sort_template(df_template)
+                    df_template.to_csv(template_csv_path, index=False)
+                    st.success("✅ テンプレートを更新しました！")
+                    st.rerun()
+
         st.sidebar.write("---")
 else:
     st.sidebar.write("現在登録されているテンプレートはありません。")
@@ -229,7 +300,6 @@ for index, row in df_categories.iterrows():
 
     c1, c2 = st.sidebar.columns([3, 1])
     with c1:
-        # 【修正点】ここも ** ではなく <b> タグを使います
         st.markdown(
             f"<div style='white-space: nowrap; font-size: 14px;'><span style='color:{row['色']};'>■</span> <b>{cat_name}</b></div>",
             unsafe_allow_html=True,
