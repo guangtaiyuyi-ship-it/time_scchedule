@@ -1,29 +1,14 @@
-import math
-import os
-from datetime import date, datetime, time, timedelta
-import pandas as pd
-import plotly.express as px
 import streamlit as st
+import pandas as pd
+from datetime import time, datetime, date, timedelta
+import os
+import plotly.express as px
+import math
 
 # --- 1. 画面のタイトルと基本設定 ---
 st.set_page_config(page_title="タイムスケジュール帳", layout="wide")
+
 st.title("私のタイムスケジュール帳")
-
-# ★ 新機能: 15分刻みと1分刻みの切り替えラジオボタン
-st.markdown("### 🛠️ 入力設定")
-time_mode = st.radio(
-    "時間の入力モードを選択してください：",
-    [
-        "🕐 直感モード (15分刻み / 時計の針UI優先)",
-        "⌨️ 詳細モード (1分刻み / 23:59などの入力用)",
-    ],
-    horizontal=True,
-)
-
-# モードに応じてstep（秒数）を切り替え (15分 = 900秒, 1分 = 60秒)
-current_step = 900 if "直感モード" in time_mode else 60
-
-st.write("---")
 
 # --- 2. データの保存先 ---
 csv_file_path = "schedule.csv"
@@ -179,6 +164,51 @@ def is_overlapping(new_start_str, new_end_str, existing_df):
 
 
 # ==========================================
+# --- Undo スナップショット管理 ---
+# ==========================================
+def save_undo_snapshot(label: str):
+    """操作前の schedule / template の状態をセッションに保存する"""
+    snap = {
+        "label": label,
+        "schedule": df_schedule.to_json(force_ascii=False),
+        "template": df_template.to_json(force_ascii=False),
+    }
+    st.session_state["undo_snapshot"] = snap
+
+
+def apply_undo():
+    """スナップショットをCSVに書き戻してリロードする"""
+    snap = st.session_state.get("undo_snapshot")
+    if snap is None:
+        return
+    import io
+
+    restored_schedule = pd.read_json(io.StringIO(snap["schedule"]))
+    restored_template = pd.read_json(io.StringIO(snap["template"]))
+    restored_schedule.to_csv(csv_file_path, index=False)
+    restored_template.to_csv(template_csv_path, index=False)
+    st.session_state["last_added_msg"] = f"↩️ 取り消しました：「{snap['label']}」"
+    del st.session_state["undo_snapshot"]
+    st.rerun()
+
+
+# --- Undo ボタン表示（関数定義後に配置） ---
+_undo_cols = st.columns([6, 1])
+with _undo_cols[0]:
+    pass
+with _undo_cols[1]:
+    if "undo_snapshot" in st.session_state:
+        _snap_label = st.session_state["undo_snapshot"]["label"]
+        st.markdown("<div style='padding-top:0.3rem;'></div>", unsafe_allow_html=True)
+        if st.button(
+            "↩️ 取り消す",
+            help=f"直前の操作を取り消します：「{_snap_label}」",
+            use_container_width=True,
+        ):
+            apply_undo()
+
+
+# ==========================================
 # --- 左側のサイドバー（テンプレート設定） ---
 # ==========================================
 st.sidebar.header("⚙️ 曜日ごとの基本テンプレート")
@@ -191,12 +221,8 @@ temp_cat = st.sidebar.selectbox("カテゴリ", selectable_categories, key="t_ca
 render_category_adder("sidebar")
 
 temp_task = st.sidebar.text_input("タスク名", "ルーティン作業", key="t_task")
-
-# ★ 修正ポイント: stepを動的に変更
-temp_start = st.sidebar.time_input(
-    "開始時間", time(7, 0), key="t_start", step=current_step
-)
-temp_end = st.sidebar.time_input("終了時間", time(8, 0), key="t_end", step=current_step)
+temp_start = st.sidebar.time_input("開始時間", time(7, 0), key="t_start")
+temp_end = st.sidebar.time_input("終了時間", time(8, 0), key="t_end")
 
 if st.sidebar.button("テンプレートに登録する"):
     new_start_str = temp_start.strftime("%H:%M")
@@ -219,15 +245,12 @@ if st.sidebar.button("テンプレートに登録する"):
                 "カテゴリ": [temp_cat],
             }
         )
+        save_undo_snapshot(f"テンプレート追加：{temp_task} ({temp_day})")
         df_template = sort_template(
             pd.concat([df_template, new_temp], ignore_index=True)
         )
         df_template.to_csv(template_csv_path, index=False)
-
-        # ★ 新機能: 追加したテンプレート時間の詳細をセッション状態に保存して共有
-        st.session_state["last_added_msg"] = (
-            f"【テンプレート登録完了】\n曜日: {temp_day}曜 | 時間: {new_start_str}～{new_end_str} | タスク: {temp_task} ({temp_cat})"
-        )
+        st.sidebar.success("登録しました！")
         st.rerun()
 
 st.sidebar.markdown("---")
@@ -242,12 +265,13 @@ if not df_template.empty:
         col_del, col_spacer = st.sidebar.columns([1, 2])
         with col_del:
             if st.button("削除", key=f"del_temp_{index}"):
+                save_undo_snapshot(f"テンプレート削除：{row['タスク']} ({row['曜日']})")
                 df_template = df_template.drop(index)
                 df_template.to_csv(template_csv_path, index=False)
                 st.rerun()
 
         # ==========================================
-        # ★ テンプレート編集エクスパンダー
+        # ★ テンプレート編集エクスパンダー（新機能）
         # ==========================================
         with st.sidebar.expander(f"✏️ 編集", expanded=False):
             edit_t_day = st.selectbox(
@@ -275,25 +299,18 @@ if not df_template.empty:
 
             current_t_start = datetime.strptime(row["開始時間"], "%H:%M").time()
             current_t_end = datetime.strptime(row["終了時間"], "%H:%M").time()
-
-            # ★ 修正ポイント: stepを動的に変更
             edit_t_start = st.time_input(
-                "開始時間",
-                current_t_start,
-                key=f"edit_t_start_{index}",
-                step=current_step,
+                "開始時間", current_t_start, key=f"edit_t_start_{index}"
             )
             edit_t_end = st.time_input(
-                "終了時間",
-                current_t_end,
-                key=f"edit_t_end_{index}",
-                step=current_step,
+                "終了時間", current_t_end, key=f"edit_t_end_{index}"
             )
 
             if st.button("テンプレートを更新する", key=f"upd_temp_btn_{index}"):
                 new_s_str = edit_t_start.strftime("%H:%M")
                 new_e_str = edit_t_end.strftime("%H:%M")
 
+                # 自分自身を除いた同じ曜日のテンプレートで重複チェック
                 other_temps = df_template[
                     (df_template["曜日"] == edit_t_day) & (df_template.index != index)
                 ]
@@ -305,6 +322,9 @@ if not df_template.empty:
                         f"❌ {edit_t_day}曜のこの時間帯には別のテンプレートが入っています！"
                     )
                 else:
+                    save_undo_snapshot(
+                        f"テンプレート編集：{row['タスク']} ({row['曜日']})"
+                    )
                     df_template.at[index, "曜日"] = edit_t_day
                     df_template.at[index, "タスク"] = edit_t_task
                     df_template.at[index, "開始時間"] = new_s_str
@@ -312,9 +332,7 @@ if not df_template.empty:
                     df_template.at[index, "カテゴリ"] = edit_t_cat
                     df_template = sort_template(df_template)
                     df_template.to_csv(template_csv_path, index=False)
-                    st.session_state["last_added_msg"] = (
-                        f"【テンプレート更新完了】\n曜日: {edit_t_day}曜 | 時間: {new_s_str}～{new_e_str} | タスク: {edit_t_task}"
-                    )
+                    st.success("✅ テンプレートを更新しました！")
                     st.rerun()
 
         st.sidebar.write("---")
@@ -504,11 +522,144 @@ def get_combined_schedule(target_date_str, target_weekday_str):
     return pd.concat([day_temp, day_spec], ignore_index=True)
 
 
-# ★ 新機能: 追加・更新された時間を画面上で共有表示するエリア
+# ==========================================
+# --- 週コピー機能 ---
+# ==========================================
+with st.expander(
+    "📋 週コピー　― ある週の個別予定を別の週へまとめてコピー", expanded=False
+):
+    st.markdown(
+        "**コピー元の週**（個別予定を取り出す週）と **コピー先の週**（貼り付ける週）を指定してください。"
+    )
+    col_src, col_dst = st.columns(2)
+
+    with col_src:
+        copy_src_date = st.date_input(
+            "コピー元：基準日", date.today(), key="copy_src_date"
+        )
+        copy_src_monday = copy_src_date - timedelta(days=copy_src_date.weekday())
+        copy_src_dates = [copy_src_monday + timedelta(days=i) for i in range(7)]
+        src_label = f"{copy_src_monday.strftime('%Y/%m/%d')} 〜 {(copy_src_monday + timedelta(days=6)).strftime('%m/%d')} の週"
+        st.caption(f"コピー元: {src_label}")
+
+        if not df_schedule.empty:
+            src_date_strs = [d.strftime("%Y-%m-%d") for d in copy_src_dates]
+            src_tasks = df_schedule[df_schedule["日付"].isin(src_date_strs)]
+        else:
+            src_tasks = pd.DataFrame()
+
+        if src_tasks.empty:
+            st.info("この週には個別予定がありません。")
+        else:
+            st.markdown(f"**{len(src_tasks)} 件の個別予定が見つかりました：**")
+            for _, r in src_tasks.sort_values(["日付", "開始時間"]).iterrows():
+                d = datetime.strptime(r["日付"], "%Y-%m-%d")
+                wday = week_days_str[d.weekday()]
+                st.markdown(
+                    f"<div style='font-size:13px; color:var(--color-text-secondary);'>"
+                    f"・{wday}({d.strftime('%m/%d')}) {r['開始時間']}〜{r['終了時間']} {r['タスク']} ({r.get('カテゴリ','未分類')})"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+    with col_dst:
+        copy_dst_date = st.date_input(
+            "コピー先：基準日", date.today() + timedelta(weeks=1), key="copy_dst_date"
+        )
+        copy_dst_monday = copy_dst_date - timedelta(days=copy_dst_date.weekday())
+        copy_dst_dates = [copy_dst_monday + timedelta(days=i) for i in range(7)]
+        dst_label = f"{copy_dst_monday.strftime('%Y/%m/%d')} 〜 {(copy_dst_monday + timedelta(days=6)).strftime('%m/%d')} の週"
+        st.caption(f"コピー先: {dst_label}")
+
+        overwrite_mode = st.radio(
+            "コピー先に同じ時間帯の予定があった場合",
+            ["⏭️ スキップ（既存を優先）", "⚠️ 上書き（コピー元を優先）"],
+            key="copy_overwrite_mode",
+        )
+
+    if not src_tasks.empty:
+        if copy_src_monday == copy_dst_monday:
+            st.warning("コピー元とコピー先が同じ週です。別の週を指定してください。")
+        else:
+            if st.button("📋 この週の個別予定をコピーする", key="do_week_copy"):
+                save_undo_snapshot(f"週コピー：{src_label} → {dst_label}")
+                do_overwrite = "上書き" in overwrite_mode
+                dst_date_strs = [d.strftime("%Y-%m-%d") for d in copy_dst_dates]
+
+                copied, skipped, overwritten = 0, 0, 0
+                new_rows = []
+
+                for _, r in src_tasks.iterrows():
+                    src_d = datetime.strptime(r["日付"], "%Y-%m-%d")
+                    weekday_idx = src_d.weekday()
+                    dst_d = copy_dst_dates[weekday_idx]
+                    dst_date_str = dst_d.strftime("%Y-%m-%d")
+                    weekday_str = week_days_str[weekday_idx]
+
+                    # コピー先のその日の既存予定（テンプレート＋個別）
+                    existing = get_combined_schedule(dst_date_str, weekday_str)
+
+                    if is_overlapping(r["開始時間"], r["終了時間"], existing):
+                        if do_overwrite:
+                            # 個別予定のうち重複するものだけ削除して上書き
+                            if not df_schedule.empty:
+                                dst_day_tasks = df_schedule[
+                                    df_schedule["日付"] == dst_date_str
+                                ]
+                                to_drop = []
+                                for idx2, r2 in dst_day_tasks.iterrows():
+                                    if is_overlapping(
+                                        r["開始時間"], r["終了時間"], pd.DataFrame([r2])
+                                    ):
+                                        to_drop.append(idx2)
+                                if to_drop:
+                                    df_schedule = df_schedule.drop(to_drop)
+                            new_rows.append(
+                                {
+                                    "日付": dst_date_str,
+                                    "タスク": r["タスク"],
+                                    "開始時間": r["開始時間"],
+                                    "終了時間": r["終了時間"],
+                                    "カテゴリ": r.get("カテゴリ", "未分類"),
+                                }
+                            )
+                            overwritten += 1
+                        else:
+                            skipped += 1
+                    else:
+                        new_rows.append(
+                            {
+                                "日付": dst_date_str,
+                                "タスク": r["タスク"],
+                                "開始時間": r["開始時間"],
+                                "終了時間": r["終了時間"],
+                                "カテゴリ": r.get("カテゴリ", "未分類"),
+                            }
+                        )
+                        copied += 1
+
+                if new_rows:
+                    df_schedule = pd.concat(
+                        [df_schedule, pd.DataFrame(new_rows)], ignore_index=True
+                    )
+                    df_schedule.to_csv(csv_file_path, index=False)
+
+                msg_parts = []
+                if copied > 0:
+                    msg_parts.append(f"✅ {copied} 件コピー完了")
+                if overwritten > 0:
+                    msg_parts.append(f"🔄 {overwritten} 件上書き")
+                if skipped > 0:
+                    msg_parts.append(f"⏭️ {skipped} 件スキップ")
+                result_msg = "　".join(msg_parts) + f"\n→ {dst_label}"
+                st.session_state["last_added_msg"] = f"【週コピー完了】\n{result_msg}"
+                st.rerun()
+
+st.write("---")
+
+# ★ 追加・更新・コピー完了メッセージの表示
 if "last_added_msg" in st.session_state:
     st.success(st.session_state["last_added_msg"])
-    # 1回表示したら確認できるように保持（クリアしたい場合は del st.session_state["last_added_msg"]）
-
 
 # ==========================================
 # --- ワークライフバランス分析レポート ---
@@ -599,15 +750,9 @@ for i in range(7):
         with col_task:
             task_name = st.text_input("タスク名", "打ち合わせ", key=f"task_{i}")
         with col_start:
-            # ★ 修正ポイント: stepを動的に変更
-            start_time = st.time_input(
-                "開始時間", time(13, 0), key=f"start_{i}", step=current_step
-            )
+            start_time = st.time_input("開始時間", time(13, 0), key=f"start_{i}")
         with col_end:
-            # ★ 修正ポイント: stepを動的に変更
-            end_time = st.time_input(
-                "終了時間", time(14, 0), key=f"end_{i}", step=current_step
-            )
+            end_time = st.time_input("終了時間", time(14, 0), key=f"end_{i}")
 
         if st.button("個別の予定を追加する", key=f"btn_{i}"):
             new_start_str = start_time.strftime("%H:%M")
@@ -624,6 +769,7 @@ for i in range(7):
                     "エラー：指定した時間帯には、すでに別の予定（またはテンプレート）が入っています！"
                 )
             else:
+                save_undo_snapshot(f"予定追加：{task_name} ({current_date_str})")
                 new_data = pd.DataFrame(
                     {
                         "日付": [current_date_str],
@@ -635,11 +781,7 @@ for i in range(7):
                 )
                 df_schedule = pd.concat([df_schedule, new_data], ignore_index=True)
                 df_schedule.to_csv(csv_file_path, index=False)
-
-                # ★ 新機能: 追加した個別予定の情報をセッションに保存して共有
-                st.session_state["last_added_msg"] = (
-                    f"【個別予定登録完了】\n日付: {current_date_str} ({current_weekday_str}) | 時間: {new_start_str}～{new_end_str} | タスク: {task_name} ({task_cat})"
-                )
+                st.success("予定を追加しました！")
                 st.rerun()
 
         st.markdown("---")
@@ -659,11 +801,11 @@ for i in range(7):
                         )
                     with c2:
                         if st.button("削除", key=f"del_task_{index}_{i}"):
+                            save_undo_snapshot(
+                                f"予定削除：{row['タスク']} ({row['日付']})"
+                            )
                             df_schedule = df_schedule.drop(index)
                             df_schedule.to_csv(csv_file_path, index=False)
-                            st.session_state["last_added_msg"] = (
-                                f"❌ 予定「{row['タスク']}」を削除しました。"
-                            )
                             st.rerun()
 
                     with st.expander(
@@ -676,18 +818,11 @@ for i in range(7):
                             row["終了時間"], "%H:%M"
                         ).time()
 
-                        # ★ 修正ポイント: stepを動的に変更
                         edit_s = st.time_input(
-                            "新しい開始時間",
-                            current_s_time,
-                            key=f"edit_s_{index}_{i}",
-                            step=current_step,
+                            "新しい開始時間", current_s_time, key=f"edit_s_{index}_{i}"
                         )
                         edit_e = st.time_input(
-                            "新しい終了時間",
-                            current_e_time,
-                            key=f"edit_e_{index}_{i}",
-                            step=current_step,
+                            "新しい終了時間", current_e_time, key=f"edit_e_{index}_{i}"
                         )
 
                         if st.button("時間を更新する", key=f"update_{index}_{i}"):
@@ -722,12 +857,13 @@ for i in range(7):
                                     "エラー：変更後の時間が他の予定と重なっています！"
                                 )
                             else:
+                                save_undo_snapshot(
+                                    f"予定時間編集：{row['タスク']} ({row['日付']})"
+                                )
                                 df_schedule.at[index, "開始時間"] = new_s_str
                                 df_schedule.at[index, "終了時間"] = new_e_str
                                 df_schedule.to_csv(csv_file_path, index=False)
-                                st.session_state["last_added_msg"] = (
-                                    f"【予定時間更新完了】\nタスク: {row['タスク']} | 新しい時間: {new_s_str}～{new_e_str}"
-                                )
+                                st.success("時間を更新しました！")
                                 st.rerun()
                     st.write("---")
             else:
